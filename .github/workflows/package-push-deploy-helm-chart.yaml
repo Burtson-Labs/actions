@@ -1,0 +1,88 @@
+name: Package, Publish, and Deploy Helm Chart
+
+on:
+  workflow_call:
+    inputs:
+      namespace:
+        description: 'The Kubernetes namespace to deploy to'
+        required: true
+        default: 'default'
+        type: string
+      values_file:
+        description: 'Path to the values file'
+        required: false
+        default: ''
+        type: string
+    secrets:
+      HELM_REPO_USERNAME:
+        description: 'Username for Helm repository'
+        required: true
+      HELM_REPO_PASSWORD:
+        description: 'Password for Helm repository'
+        required: true
+      KUBECONFIG:
+        description: 'Base64-encoded content of the kubeconfig file'
+        required: true
+
+jobs:
+  package-publish-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Install Helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+      - name: Install ChartMuseum Plugin
+        run: |
+          helm plugin install https://github.com/chartmuseum/helm-push.git
+
+      - name: Package Helm Chart
+        run: |
+          helm package charts/${{ github.event.repository.name }} --destination ./packaged
+
+      - name: Upload Packaged Chart
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaged-chart
+          path: ./packaged/${{ github.event.repository.name }}-*.tgz
+
+      - name: Download Packaged Chart
+        uses: actions/download-artifact@v4
+        with:
+          name: packaged-chart
+          path: ./packaged
+
+      - name: Push Helm Chart
+        run: |
+          helm repo add burtson-labs-charts https://charts.burtson.ai --username ${{ secrets.HELM_REPO_USERNAME }} --password ${{ secrets.HELM_REPO_PASSWORD }}
+          helm cm-push ./packaged/${{ github.event.repository.name }}-*.tgz burtson-labs-charts
+
+      - name: Set up Kubernetes
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBECONFIG }}" | base64 -d > $HOME/.kube/config
+        shell: bash
+
+      - name: Ensure kubectl can connect to the cluster
+        run: |
+          kubectl get nodes
+
+      - name: Add Helm repository
+        run: helm repo add burtson-labs-charts https://charts.burtson.ai --username ${{ secrets.HELM_REPO_USERNAME }} --password ${{ secrets.HELM_REPO_PASSWORD }}
+
+      - name: Update Helm repository
+        run: helm repo update
+
+      - name: Deploy Helm chart
+        run: |
+          if [ -z "${{ inputs.values_file }}" ]; then
+            helm upgrade --install ${{ github.event.repository.name }} burtson-labs-charts/${{ github.event.repository.name }} \
+              --namespace ${{ inputs.namespace }}
+          else
+            helm upgrade --install ${{ github.event.repository.name }} burtson-labs-charts/${{ github.event.repository.name }} \
+              --namespace ${{ inputs.namespace }} -f ${{ inputs.values_file }}
+          fi

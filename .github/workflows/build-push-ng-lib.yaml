@@ -1,0 +1,59 @@
+name: build-push-ng-lib
+
+on: 
+  workflow_call:
+    inputs:
+      lib-name:
+        description: 'Optional input to specify the lib name for publishing (this should be the unscoped dir name)'
+        required: false
+        default: $(echo ${{ github.repository }} | cut -d'/' -f2)
+        type: string
+      node-version:
+        description: 'Node.js version to use'
+        required: false
+        default: '20.x'
+        type: string
+      build-command: 
+        description: 'The command to build the project'
+        required: false
+        default: 'npm run build'
+        type: string
+    secrets: 
+      MY_GITHUB_TOKEN:
+        required: true
+jobs: 
+  build-push-ng-lib: 
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout "${{ github.repository }}"
+        uses: actions/checkout@v4
+        
+      - name: Add github package auth
+        run: | 
+          echo "@burtson-labs:registry=https://npm.pkg.github.com" > ~/.npmrc
+          echo "//npm.pkg.github.com/:_authToken=${{ secrets.MY_GITHUB_TOKEN }}" >> ~/.npmrc
+      
+      - name: Setup node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+      
+      - name: Install Packages
+        run: npm ci
+
+      - name: Build 
+        run: ${{ inputs.build-command }}
+
+      - name: Publish to github packages
+        run: npm publish ./dist/${{inputs.lib-name}}
+
+      
+
+      
+
+      
+      
+
+      
+      
