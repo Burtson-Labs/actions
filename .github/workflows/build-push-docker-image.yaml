@@ -27,7 +27,7 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.MY_GITHUB_TOKEN }}
-          
+
       - name: Extract metadata (tags, labels) for Docker
         id: meta
         uses: docker/metadata-action@v3
@@ -35,19 +35,14 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           flavor: |
             latest=true
-      
-      - name: Debug NPM_TOKEN
-        run: echo "NPM_TOKEN=${{ secrets.MY_GITHUB_TOKEN }}"            
-        
-      - name: Build and push Docker image
+
+      - name: Build and push Docker image securely
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: linux/arm64
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            NPM_TOKEN=${{ secrets.MY_GITHUB_TOKEN }}
           secrets: |
-            npmrc=${{ secrets.NPMRC }}
+            npm_token=${{ secrets.MY_NPM_TOKEN }}
