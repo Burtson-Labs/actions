@@ -17,6 +17,10 @@ on:
         description: 'Path to the Helm chart directory'
         required: true
         type: string
+      release_name:
+        description: 'Helm release name'
+        required: true
+        type: string
     secrets:
       HELM_REPO_USERNAME:
         description: 'Username for Helm repository'
@@ -84,9 +88,9 @@ jobs:
       - name: Deploy Helm chart
         run: |
           if [ -z "${{ inputs.values_file }}" ]; then
-            helm upgrade --install burtson-labs-website burtson-labs-charts/burtson-labs-website \
+            helm upgrade --install ${{ inputs.release_name }} burtson-labs-charts/burtson-labs \
               --namespace ${{ inputs.namespace }}
           else
-            helm upgrade --install burtson-labs-website burtson-labs-charts/burtson-labs-website \
+            helm upgrade --install ${{ inputs.release_name }} burtson-labs-charts/burtson-labs \
               --namespace ${{ inputs.namespace }} -f ${{ inputs.values_file }}
           fi
