@@ -2,9 +2,13 @@ name: Build and Publish Docker Image
 
 on:
   workflow_call:
+    inputs:
+      imageName:
+        required: true
+        type: string
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME: ${{ inputs.imageName }}
 
 jobs:
   docker-publish:
