@@ -42,14 +42,19 @@ jobs:
       
       - name: Debug NPM_TOKEN
         run: echo "NPM_TOKEN=${{ secrets.GHCR_PAT }}"            
-        
+
+      - name: Debug image info
+        run: |
+          echo "ImageName: ${{ env.IMAGE_NAME }}"
+          echo "Docker tags: ${{ steps.meta.outputs.tags }}"
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           platforms: linux/arm64
           push: true
-          tags: ghcr.io/${{ inputs.imageName }}:latest
+          tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             NPM_TOKEN=${{ secrets.GHCR_PAT }}
