@@ -13,6 +13,10 @@ on:
         required: false
         default: ''
         type: string
+      chart_path:
+        description: 'Path to the Helm chart directory'
+        required: true
+        type: string
     secrets:
       HELM_REPO_USERNAME:
         description: 'Username for Helm repository'
@@ -42,7 +46,7 @@ jobs:
 
       - name: Package Helm Chart
         run: |
-          helm package charts/${{ github.event.repository.name }} --destination ./packaged
+          helm package ${{ inputs.chart_path }} --destination ./packaged
 
       - name: Upload Packaged Chart
         uses: actions/upload-artifact@v4
@@ -59,7 +63,7 @@ jobs:
       - name: Push Helm Chart
         run: |
           helm repo add burtson-labs-charts https://charts.burtson.ai --username ${{ secrets.HELM_REPO_USERNAME }} --password ${{ secrets.HELM_REPO_PASSWORD }}
-          helm cm-push ./packaged/${{ github.event.repository.name }}-*.tgz burtson-labs-charts
+          helm cm-push ./packaged/*.tgz burtson-labs-charts
 
       - name: Set up Kubernetes
         run: |
@@ -80,9 +84,9 @@ jobs:
       - name: Deploy Helm chart
         run: |
           if [ -z "${{ inputs.values_file }}" ]; then
-            helm upgrade --install ${{ github.event.repository.name }} burtson-labs-charts/${{ github.event.repository.name }} \
+            helm upgrade --install burtson-labs-website burtson-labs-charts/burtson-labs-website \
               --namespace ${{ inputs.namespace }}
           else
-            helm upgrade --install ${{ github.event.repository.name }} burtson-labs-charts/${{ github.event.repository.name }} \
+            helm upgrade --install burtson-labs-website burtson-labs-charts/burtson-labs-website \
               --namespace ${{ inputs.namespace }} -f ${{ inputs.values_file }}
           fi
