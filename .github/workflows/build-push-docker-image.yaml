@@ -37,7 +37,7 @@ jobs:
             latest=true
       
       - name: Debug NPM_TOKEN
-        run: echo "NPM_TOKEN=${{ secrets.MY_GITHUB_TOKEN }}"            
+        run: echo "NPM_TOKEN=${{ secrets.GHCR_PAT }}"            
         
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
@@ -48,6 +48,6 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            NPM_TOKEN=${{ secrets.MY_GITHUB_TOKEN }}
+            NPM_TOKEN=${{ secrets.GHCR_PAT }}
           secrets: |
             npmrc=${{ secrets.NPMRC }}
