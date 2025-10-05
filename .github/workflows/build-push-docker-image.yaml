@@ -6,6 +6,11 @@ on:
       imageName:
         required: true
         type: string
+      platforms:
+        required: false
+        type: string
+        default: "linux/arm64"
+        description: "Target platforms for multi-platform builds (e.g., linux/amd64,linux/arm64)"
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ inputs.imageName }}
@@ -52,7 +57,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: linux/arm64
+          platforms: ${{ inputs.platforms }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
