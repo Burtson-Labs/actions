@@ -9,6 +9,21 @@ on:
       packageName:
         required: true
         type: string
+      publishToRegistry:
+        required: false
+        type: boolean
+        default: false
+      registryUrl:
+        required: false
+        type: string
+        default: "https://registry.npmjs.org/"
+      isPublic:
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      NPM_TOKEN:
+        required: false
 
 env:
   NODE_AUTH_TOKEN: ${{ secrets.GHCR_PAT }}
@@ -37,4 +52,38 @@ jobs:
         run: npm run build
 
       - name: Publish to GitHub Packages
-        run: npm publish
+        env:
+          IS_PUBLIC: ${{ inputs.isPublic }}
+        run: |
+          if [ "${IS_PUBLIC}" = "true" ]; then
+            npm publish --access public
+          else
+            npm publish
+          fi
+
+      - name: Publish to npmjs registry
+        if: inputs.publishToRegistry
+        env:
+          REGISTRY_URL: ${{ inputs.registryUrl }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          IS_PUBLIC: ${{ inputs.isPublic }}
+        run: |
+          if [ -z "$REGISTRY_URL" ]; then
+            echo "registryUrl input must be provided when publishToRegistry is true" >&2
+            exit 1
+          fi
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "NPM_TOKEN secret must be provided when publishToRegistry is true" >&2
+            exit 1
+          fi
+          REGISTRY_HOST=$(echo "$REGISTRY_URL" | sed -e 's#^https\?://##' -e 's#/$##')
+          printf 'registry=%s\nalways-auth=true\n//%s/:_authToken=%s\n' \
+            "$REGISTRY_URL" \
+            "$REGISTRY_HOST" \
+            "$NPM_TOKEN" \
+            > ~/.npmrc
+          if [ "${IS_PUBLIC}" = "true" ]; then
+            npm publish --registry "$REGISTRY_URL" --access public
+          else
+            npm publish --registry "$REGISTRY_URL"
+          fi
