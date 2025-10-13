@@ -76,27 +76,28 @@ jobs:
             exit 1
           fi
           
-          # Clear any existing npm configuration using --location=user
-          npm config delete registry --location=user || true
-          npm config delete always-auth --location=user || true
-          npm config delete @burtson-labs:registry --location=user || true
-          
-          # Set up fresh configuration for npmjs
-          export NODE_AUTH_TOKEN="$NPM_TOKEN"
-          export NPM_CONFIG_REGISTRY="$REGISTRY_URL"
+          # Create a temporary .npmrc file for this publish operation
+          TEMP_NPMRC=$(mktemp)
           REGISTRY_HOST=$(echo "$REGISTRY_URL" | sed -e 's#^https\?://##' -e 's#/$##')
-          npm config set registry "$REGISTRY_URL" --location=user
-          npm config set "//${REGISTRY_HOST}/:_authToken" "$NPM_TOKEN" --location=user
-          npm config set always-auth true --location=user
+          
+          echo "registry=$REGISTRY_URL" > "$TEMP_NPMRC"
+          echo "//${REGISTRY_HOST}/:_authToken=$NPM_TOKEN" >> "$TEMP_NPMRC"
+          echo "always-auth=true" >> "$TEMP_NPMRC"
           
           if [[ $PACKAGE_NAME == @*/* ]]; then
             SCOPE=${PACKAGE_NAME%%/*}
-            npm config set "${SCOPE}:registry" "$REGISTRY_URL" --location=user
+            echo "${SCOPE}:registry=$REGISTRY_URL" >> "$TEMP_NPMRC"
           fi
           
           echo "Publishing $PACKAGE_NAME to $REGISTRY_URL"
+          echo "Using temporary npmrc: $TEMP_NPMRC"
+          cat "$TEMP_NPMRC"
+          
           if [ "${IS_PUBLIC}" = "true" ]; then
-            npm publish --registry "$REGISTRY_URL" --access public
+            npm publish --userconfig "$TEMP_NPMRC" --access public
           else
-            npm publish --registry "$REGISTRY_URL"
+            npm publish --userconfig "$TEMP_NPMRC"
           fi
+          
+          # Clean up temporary file
+          rm -f "$TEMP_NPMRC"
