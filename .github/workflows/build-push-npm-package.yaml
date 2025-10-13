@@ -25,8 +25,6 @@ on:
       NPM_TOKEN:
         required: false
 
-env:
-
 jobs:
   publish-package:
     runs-on: ubuntu-latest
