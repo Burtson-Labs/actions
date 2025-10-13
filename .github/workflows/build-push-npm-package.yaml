@@ -66,6 +66,9 @@ jobs:
         env:
           REGISTRY_URL: ${{ inputs.registryUrl }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_REGISTRY: ${{ inputs.registryUrl }}
+          PACKAGE_NAME: ${{ inputs.packageName }}
           IS_PUBLIC: ${{ inputs.isPublic }}
         run: |
           if [ -z "$REGISTRY_URL" ]; then
@@ -76,13 +79,17 @@ jobs:
             echo "NPM_TOKEN secret must be provided when publishToRegistry is true" >&2
             exit 1
           fi
+          export NODE_AUTH_TOKEN="$NPM_TOKEN"
+          export NPM_CONFIG_REGISTRY="$REGISTRY_URL"
           REGISTRY_HOST=$(echo "$REGISTRY_URL" | sed -e 's#^https\?://##' -e 's#/$##')
-          printf 'registry=%s\nalways-auth=true\n//%s/:_authToken=%s\n' \
-            "$REGISTRY_URL" \
-            "$REGISTRY_HOST" \
-            "$NPM_TOKEN" \
-            > ~/.npmrc
-          echo "Publishing to $REGISTRY_URL"
+          npm config set registry "$REGISTRY_URL"
+          npm config set "//${REGISTRY_HOST}/:_authToken" "$NPM_TOKEN"
+          npm config set always-auth true
+          if [[ $PACKAGE_NAME == @*/* ]]; then
+            SCOPE=${PACKAGE_NAME%%/*}
+            npm config set "${SCOPE}:registry" "$REGISTRY_URL"
+          fi
+          echo "Publishing $PACKAGE_NAME to $REGISTRY_URL"
           if [ "${IS_PUBLIC}" = "true" ]; then
             npm publish --registry "$REGISTRY_URL" --access public
           else
