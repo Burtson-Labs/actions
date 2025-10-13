@@ -69,8 +69,8 @@ jobs:
           IS_PUBLIC: ${{ inputs.isPublic }}
         run: |
           if [ -z "$REGISTRY_URL" ]; then
-            echo "registryUrl input must be provided when publishToRegistry is true" >&2
-            exit 1
+            REGISTRY_URL="https://registry.npmjs.org/"
+            echo "registryUrl input empty; defaulting to $REGISTRY_URL"
           fi
           if [ -z "$NPM_TOKEN" ]; then
             echo "NPM_TOKEN secret must be provided when publishToRegistry is true" >&2
@@ -82,6 +82,7 @@ jobs:
             "$REGISTRY_HOST" \
             "$NPM_TOKEN" \
             > ~/.npmrc
+          echo "Publishing to $REGISTRY_URL"
           if [ "${IS_PUBLIC}" = "true" ]; then
             npm publish --registry "$REGISTRY_URL" --access public
           else
