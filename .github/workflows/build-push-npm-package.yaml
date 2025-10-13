@@ -76,22 +76,22 @@ jobs:
             exit 1
           fi
           
-          # Clear any existing npm configuration
-          npm config delete registry || true
-          npm config delete always-auth || true
-          npm config delete @burtson-labs:registry || true
+          # Clear any existing npm configuration using --location=user
+          npm config delete registry --location=user || true
+          npm config delete always-auth --location=user || true
+          npm config delete @burtson-labs:registry --location=user || true
           
           # Set up fresh configuration for npmjs
           export NODE_AUTH_TOKEN="$NPM_TOKEN"
           export NPM_CONFIG_REGISTRY="$REGISTRY_URL"
           REGISTRY_HOST=$(echo "$REGISTRY_URL" | sed -e 's#^https\?://##' -e 's#/$##')
-          npm config set registry "$REGISTRY_URL"
-          npm config set "//${REGISTRY_HOST}/:_authToken" "$NPM_TOKEN"
-          npm config set always-auth true
+          npm config set registry "$REGISTRY_URL" --location=user
+          npm config set "//${REGISTRY_HOST}/:_authToken" "$NPM_TOKEN" --location=user
+          npm config set always-auth true --location=user
           
           if [[ $PACKAGE_NAME == @*/* ]]; then
             SCOPE=${PACKAGE_NAME%%/*}
-            npm config set "${SCOPE}:registry" "$REGISTRY_URL"
+            npm config set "${SCOPE}:registry" "$REGISTRY_URL" --location=user
           fi
           
           echo "Publishing $PACKAGE_NAME to $REGISTRY_URL"
