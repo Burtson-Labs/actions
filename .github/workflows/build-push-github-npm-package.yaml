@@ -1,0 +1,49 @@
+name: Build and Publish NPM Package to GitHub Packages
+
+on:
+  workflow_call:
+    inputs:
+      packagePath:
+        required: true
+        type: string
+      packageName:
+        required: true
+        type: string
+      isPublic:
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  publish-package:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.packagePath }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          registry-url: https://npm.pkg.github.com/
+          scope: "@burtson-labs"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build package
+        run: npm run build
+
+      - name: Publish to GitHub Packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GHCR_PAT }}
+          IS_PUBLIC: ${{ inputs.isPublic }}
+        run: |
+          if [ "${IS_PUBLIC}" = "true" ]; then
+            npm publish --access public || echo "Package version already exists in GitHub Packages, skipping..."
+          else
+            npm publish || echo "Package version already exists in GitHub Packages, skipping..."
+          fi

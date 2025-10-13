@@ -1,4 +1,4 @@
-name: Build and Publish NPM Package
+name: Build and Publish NPM Package to npmjs
 
 on:
   workflow_call:
@@ -9,10 +9,6 @@ on:
       packageName:
         required: true
         type: string
-      publishToRegistry:
-        required: false
-        type: boolean
-        default: false
       registryUrl:
         required: false
         type: string
@@ -23,7 +19,7 @@ on:
         default: false
     secrets:
       NPM_TOKEN:
-        required: false
+        required: true
 
 jobs:
   publish-package:
@@ -39,8 +35,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 18
-          registry-url: https://npm.pkg.github.com/
-          scope: "@burtson-labs"
+          registry-url: ${{ inputs.registryUrl }}
 
       - name: Install dependencies
         run: npm install
@@ -48,19 +43,7 @@ jobs:
       - name: Build package
         run: npm run build
 
-      - name: Publish to GitHub Packages
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GHCR_PAT }}
-          IS_PUBLIC: ${{ inputs.isPublic }}
-        run: |
-          if [ "${IS_PUBLIC}" = "true" ]; then
-            npm publish --access public || echo "Package version already exists in GitHub Packages, skipping..."
-          else
-            npm publish || echo "Package version already exists in GitHub Packages, skipping..."
-          fi
-
       - name: Publish to npmjs registry
-        if: inputs.publishToRegistry
         env:
           REGISTRY_URL: ${{ inputs.registryUrl }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -72,7 +55,7 @@ jobs:
             echo "registryUrl input empty; defaulting to $REGISTRY_URL"
           fi
           if [ -z "$NPM_TOKEN" ]; then
-            echo "NPM_TOKEN secret must be provided when publishToRegistry is true" >&2
+            echo "NPM_TOKEN secret must be provided" >&2
             exit 1
           fi
           
