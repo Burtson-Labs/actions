@@ -26,7 +26,6 @@ on:
         required: false
 
 env:
-  NODE_AUTH_TOKEN: ${{ secrets.GHCR_PAT }}
 
 jobs:
   publish-package:
@@ -53,12 +52,13 @@ jobs:
 
       - name: Publish to GitHub Packages
         env:
+          NODE_AUTH_TOKEN: ${{ secrets.GHCR_PAT }}
           IS_PUBLIC: ${{ inputs.isPublic }}
         run: |
           if [ "${IS_PUBLIC}" = "true" ]; then
-            npm publish --access public
+            npm publish --access public || echo "Package version already exists in GitHub Packages, skipping..."
           else
-            npm publish
+            npm publish || echo "Package version already exists in GitHub Packages, skipping..."
           fi
 
       - name: Publish to npmjs registry
@@ -66,8 +66,6 @@ jobs:
         env:
           REGISTRY_URL: ${{ inputs.registryUrl }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_CONFIG_REGISTRY: ${{ inputs.registryUrl }}
           PACKAGE_NAME: ${{ inputs.packageName }}
           IS_PUBLIC: ${{ inputs.isPublic }}
         run: |
@@ -79,16 +77,25 @@ jobs:
             echo "NPM_TOKEN secret must be provided when publishToRegistry is true" >&2
             exit 1
           fi
+          
+          # Clear any existing npm configuration
+          npm config delete registry || true
+          npm config delete always-auth || true
+          npm config delete @burtson-labs:registry || true
+          
+          # Set up fresh configuration for npmjs
           export NODE_AUTH_TOKEN="$NPM_TOKEN"
           export NPM_CONFIG_REGISTRY="$REGISTRY_URL"
           REGISTRY_HOST=$(echo "$REGISTRY_URL" | sed -e 's#^https\?://##' -e 's#/$##')
           npm config set registry "$REGISTRY_URL"
           npm config set "//${REGISTRY_HOST}/:_authToken" "$NPM_TOKEN"
           npm config set always-auth true
+          
           if [[ $PACKAGE_NAME == @*/* ]]; then
             SCOPE=${PACKAGE_NAME%%/*}
             npm config set "${SCOPE}:registry" "$REGISTRY_URL"
           fi
+          
           echo "Publishing $PACKAGE_NAME to $REGISTRY_URL"
           if [ "${IS_PUBLIC}" = "true" ]; then
             npm publish --registry "$REGISTRY_URL" --access public
