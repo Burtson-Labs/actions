@@ -31,8 +31,6 @@ jobs:
           node-version: 18
           registry-url: https://npm.pkg.github.com/
           scope: "@burtson-labs"
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
 
       - name: Enable Corepack (pnpm)
         env:
