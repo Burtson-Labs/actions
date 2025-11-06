@@ -1,0 +1,127 @@
+name: Build and Publish PNPM Package to npmjs
+
+on:
+  workflow_call:
+    inputs:
+      packagePath:
+        required: true
+        type: string
+      packageName:
+        required: true
+        type: string
+      registryUrl:
+        required: false
+        type: string
+        default: "https://registry.npmjs.org/"
+      isPublic:
+        required: false
+        type: boolean
+        default: false
+      pnpmVersion:
+        required: false
+        type: string
+        default: "9.0.0"
+    secrets:
+      NPM_TOKEN:
+        required: true
+
+jobs:
+  publish-package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          registry-url: ${{ inputs.registryUrl }}
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Enable Corepack (pnpm)
+        env:
+          PNPM_VERSION: ${{ inputs.pnpmVersion }}
+        run: |
+          VERSION="${PNPM_VERSION:-9.0.0}"
+          echo "Activating pnpm@$VERSION"
+          corepack enable
+          corepack prepare "pnpm@$VERSION" --activate
+
+      - name: Verify package path
+        run: |
+          if [ ! -f "${{ inputs.packagePath }}/package.json" ]; then
+            echo "package.json not found at ${{ inputs.packagePath }}" >&2
+            exit 1
+          fi
+
+      - name: Configure npm registry auth
+        id: registry_auth
+        env:
+          REGISTRY_URL_INPUT: ${{ inputs.registryUrl }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PACKAGE_NAME: ${{ inputs.packageName }}
+        run: |
+          REGISTRY_URL="$REGISTRY_URL_INPUT"
+          if [ -z "$REGISTRY_URL" ]; then
+            REGISTRY_URL="https://registry.npmjs.org/"
+            echo "registryUrl input empty; defaulting to $REGISTRY_URL"
+          fi
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "NPM_TOKEN secret must be provided" >&2
+            exit 1
+          fi
+          TEMP_NPMRC=$(mktemp)
+          REGISTRY_HOST=$(echo "$REGISTRY_URL" | sed -e 's#^https\?://##' -e 's#/$##')
+          {
+            echo "registry=$REGISTRY_URL"
+            echo "//${REGISTRY_HOST}/:_authToken=$NPM_TOKEN"
+            echo "always-auth=true"
+          } > "$TEMP_NPMRC"
+          if [[ "$PACKAGE_NAME" == @*/* ]]; then
+            SCOPE=${PACKAGE_NAME%%/*}
+            echo "${SCOPE}:registry=$REGISTRY_URL" >> "$TEMP_NPMRC"
+          fi
+          echo "npmrc_path=$TEMP_NPMRC" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies with pnpm
+        env:
+          NPM_CONFIG_USERCONFIG: ${{ steps.registry_auth.outputs.npmrc_path }}
+        run: |
+          if [ -f pnpm-lock.yaml ]; then
+            pnpm install --frozen-lockfile
+          else
+            echo "pnpm-lock.yaml not found; falling back to plain install."
+            pnpm install
+          fi
+
+      - name: Build package
+        env:
+          PACKAGE_NAME: ${{ inputs.packageName }}
+        run: |
+          if [ -z "$PACKAGE_NAME" ]; then
+            echo "packageName input is required" >&2
+            exit 1
+          fi
+          pnpm --filter "$PACKAGE_NAME" run build
+
+      - name: Publish to npmjs
+        env:
+          PACKAGE_NAME: ${{ inputs.packageName }}
+          IS_PUBLIC: ${{ inputs.isPublic }}
+          NPM_CONFIG_USERCONFIG: ${{ steps.registry_auth.outputs.npmrc_path }}
+        run: |
+          if [ -z "$PACKAGE_NAME" ]; then
+            echo "packageName input is required" >&2
+            exit 1
+          fi
+          if [ "${IS_PUBLIC}" = "true" ]; then
+            pnpm --filter "$PACKAGE_NAME" publish --no-git-checks --access public
+          else
+            pnpm --filter "$PACKAGE_NAME" publish --no-git-checks
+          fi
+
+      - name: Clean up npm auth config
+        if: ${{ steps.registry_auth.outputs.npmrc_path != '' }}
+        run: rm -f "${{ steps.registry_auth.outputs.npmrc_path }}"

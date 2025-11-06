@@ -1,0 +1,92 @@
+name: Build and Publish PNPM Package to GitHub Packages
+
+on:
+  workflow_call:
+    inputs:
+      packagePath:
+        required: true
+        type: string
+      packageName:
+        required: true
+        type: string
+      isPublic:
+        required: false
+        type: boolean
+        default: false
+      pnpmVersion:
+        required: false
+        type: string
+        default: "9.0.0"
+
+jobs:
+  publish-package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          registry-url: https://npm.pkg.github.com/
+          scope: "@burtson-labs"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Enable Corepack (pnpm)
+        env:
+          PNPM_VERSION: ${{ inputs.pnpmVersion }}
+        run: |
+          VERSION="${PNPM_VERSION:-9.0.0}"
+          echo "Activating pnpm@$VERSION"
+          corepack enable
+          corepack prepare "pnpm@$VERSION" --activate
+
+      - name: Verify package path
+        run: |
+          if [ ! -f "${{ inputs.packagePath }}/package.json" ]; then
+            echo "package.json not found at ${{ inputs.packagePath }}" >&2
+            exit 1
+          fi
+
+      - name: Install dependencies with pnpm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GHCR_PAT }}
+        run: |
+          if [ -f pnpm-lock.yaml ]; then
+            pnpm install --frozen-lockfile
+          else
+            echo "pnpm-lock.yaml not found; falling back to plain install."
+            pnpm install
+          fi
+
+      - name: Build package
+        env:
+          PACKAGE_NAME: ${{ inputs.packageName }}
+        run: |
+          if [ -z "$PACKAGE_NAME" ]; then
+            echo "packageName input is required" >&2
+            exit 1
+          fi
+          pnpm --filter "$PACKAGE_NAME" run build
+
+      - name: Publish to GitHub Packages
+        env:
+          PACKAGE_NAME: ${{ inputs.packageName }}
+          IS_PUBLIC: ${{ inputs.isPublic }}
+          NODE_AUTH_TOKEN: ${{ secrets.GHCR_PAT }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "GHCR_PAT secret must be provided" >&2
+            exit 1
+          fi
+          if [ -z "$PACKAGE_NAME" ]; then
+            echo "packageName input is required" >&2
+            exit 1
+          fi
+          if [ "${IS_PUBLIC}" = "true" ]; then
+            pnpm --filter "$PACKAGE_NAME" publish --no-git-checks --access public || echo "Package version already exists in GitHub Packages, skipping..."
+          else
+            pnpm --filter "$PACKAGE_NAME" publish --no-git-checks || echo "Package version already exists in GitHub Packages, skipping..."
+          fi
