@@ -17,6 +17,10 @@ on:
         required: false
         type: string
         default: "9.0.0"
+      registryUrl:
+        required: false
+        type: string
+        default: "https://npm.pkg.github.com/"
 
 jobs:
   publish-package:
@@ -29,8 +33,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 18
-          registry-url: https://npm.pkg.github.com/
-          scope: "@burtson-labs"
 
       - name: Enable Corepack (pnpm)
         env:
@@ -48,9 +50,31 @@ jobs:
             exit 1
           fi
 
-      - name: Install dependencies with pnpm
+      - name: Prepare GitHub Packages auth
+        id: github_auth
         env:
+          REGISTRY_URL_INPUT: ${{ inputs.registryUrl }}
           NODE_AUTH_TOKEN: ${{ secrets.GHCR_PAT }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "GHCR_PAT secret must be provided" >&2
+            exit 1
+          fi
+          REGISTRY_URL="$REGISTRY_URL_INPUT"
+          if [ -z "$REGISTRY_URL" ]; then
+            REGISTRY_URL="https://npm.pkg.github.com/"
+          fi
+          TEMP_NPMRC=$(mktemp)
+          REGISTRY_HOST=$(echo "$REGISTRY_URL" | sed -e 's#^https\?://##' -e 's#/$##')
+          {
+            echo "registry=$REGISTRY_URL"
+            echo "//${REGISTRY_HOST}/:_authToken=$NODE_AUTH_TOKEN"
+            echo "always-auth=true"
+          } > "$TEMP_NPMRC"
+          echo "npmrc_path=$TEMP_NPMRC" >> "$GITHUB_OUTPUT"
+          echo "registry_url=$REGISTRY_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies with pnpm
         run: |
           if [ -f pnpm-lock.yaml ]; then
             pnpm install --frozen-lockfile
@@ -74,6 +98,8 @@ jobs:
           PACKAGE_NAME: ${{ inputs.packageName }}
           IS_PUBLIC: ${{ inputs.isPublic }}
           NODE_AUTH_TOKEN: ${{ secrets.GHCR_PAT }}
+          NPM_CONFIG_USERCONFIG: ${{ steps.github_auth.outputs.npmrc_path }}
+          REGISTRY_URL: ${{ steps.github_auth.outputs.registry_url }}
         run: |
           if [ -z "$NODE_AUTH_TOKEN" ]; then
             echo "GHCR_PAT secret must be provided" >&2
@@ -84,7 +110,11 @@ jobs:
             exit 1
           fi
           if [ "${IS_PUBLIC}" = "true" ]; then
-            pnpm --filter "$PACKAGE_NAME" publish --no-git-checks --access public || echo "Package version already exists in GitHub Packages, skipping..."
+            pnpm --filter "$PACKAGE_NAME" publish --no-git-checks --access public --registry "$REGISTRY_URL" || echo "Package version already exists in GitHub Packages, skipping..."
           else
-            pnpm --filter "$PACKAGE_NAME" publish --no-git-checks || echo "Package version already exists in GitHub Packages, skipping..."
+            pnpm --filter "$PACKAGE_NAME" publish --no-git-checks --registry "$REGISTRY_URL" || echo "Package version already exists in GitHub Packages, skipping..."
           fi
+
+      - name: Clean up npm auth config
+        if: ${{ steps.github_auth.outputs.npmrc_path != '' }}
+        run: rm -f "${{ steps.github_auth.outputs.npmrc_path }}"
