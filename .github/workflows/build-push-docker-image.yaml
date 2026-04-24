@@ -11,13 +11,18 @@ on:
         type: string
         default: "linux/arm64"
         description: "Target platforms for multi-platform builds (e.g., linux/amd64,linux/arm64)"
+      runs_on:
+        required: false
+        type: string
+        default: '"ubuntu-latest"'
+        description: 'JSON-encoded runs-on value. Default is "ubuntu-latest". Pass ["self-hosted","arm64","burtson"] to opt into the Burtson-Labs self-hosted K3s pool.'
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ inputs.imageName }}
 
 jobs:
   docker-publish:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(inputs.runs_on) }}
     outputs:
       tag: ${{ steps.meta.outputs.tags }}
     steps:
