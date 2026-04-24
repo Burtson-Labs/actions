@@ -21,6 +21,11 @@ on:
         description: 'Helm release name'
         required: true
         type: string
+      runs_on:
+        description: 'JSON-encoded runs-on value. Default is "ubuntu-latest". Pass ["self-hosted","arm64","burtson"] to opt into the Burtson-Labs self-hosted K3s pool.'
+        required: false
+        type: string
+        default: '"ubuntu-latest"'
     secrets:
       HELM_REPO_USERNAME:
         description: 'Username for Helm repository'
@@ -34,7 +39,7 @@ on:
 
 jobs:
   package-publish-deploy:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(inputs.runs_on) }}
 
     steps:
       - name: Checkout repository

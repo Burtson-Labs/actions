@@ -21,13 +21,18 @@ on:
         required: false
         type: string
         default: "9.0.0"
+      runs_on:
+        required: false
+        type: string
+        default: '"ubuntu-latest"'
+        description: 'JSON-encoded runs-on value. Default is "ubuntu-latest". Pass ["self-hosted","arm64","burtson"] to opt into the Burtson-Labs self-hosted K3s pool.'
     secrets:
       NPM_TOKEN:
         required: true
 
 jobs:
   publish-package:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(inputs.runs_on) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3

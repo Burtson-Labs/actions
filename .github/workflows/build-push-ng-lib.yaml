@@ -13,17 +13,22 @@ on:
         required: false
         default: '20.x'
         type: string
-      build-command: 
+      build-command:
         description: 'The command to build the project'
         required: false
         default: 'npm run build'
         type: string
-    secrets: 
+      runs_on:
+        description: 'JSON-encoded runs-on value. Default is "ubuntu-latest". Pass ["self-hosted","arm64","burtson"] to opt into the Burtson-Labs self-hosted K3s pool.'
+        required: false
+        type: string
+        default: '"ubuntu-latest"'
+    secrets:
       MY_GITHUB_TOKEN:
         required: true
-jobs: 
-  build-push-ng-lib: 
-    runs-on: ubuntu-latest
+jobs:
+  build-push-ng-lib:
+    runs-on: ${{ fromJSON(inputs.runs_on) }}
     
     steps:
       - name: Checkout "${{ github.repository }}"
