@@ -25,7 +25,7 @@ on:
         required: false
         type: string
         default: '"ubuntu-latest"'
-        description: 'JSON-encoded runs-on value. Default is "ubuntu-latest". Pass ["self-hosted","arm64","burtson"] to opt into the Burtson-Labs self-hosted K3s pool.'
+        description: 'JSON-encoded runs-on value. Default is "ubuntu-latest". Pass "burtson-labs-runners" (the scale-set name) to opt into the Burtson-Labs self-hosted K3s pool.'
     secrets:
       NPM_TOKEN:
         required: true
