@@ -49,6 +49,24 @@ jobs:
         run: |
           curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
+      - name: Install kubectl
+        # GHA-hosted ubuntu images ship kubectl pre-installed; ARC self-hosted
+        # runners do not. Install it here so the workflow runs on either pool.
+        # Idempotent — re-installing on ubuntu-latest is harmless.
+        run: |
+          ARCH="$(uname -m)"
+          case "$ARCH" in
+            x86_64)  KARCH=amd64 ;;
+            aarch64) KARCH=arm64 ;;
+            arm64)   KARCH=arm64 ;;
+            *) echo "Unsupported arch: $ARCH" >&2; exit 1 ;;
+          esac
+          KVER="$(curl -fsSL https://dl.k8s.io/release/stable.txt)"
+          curl -fsSLo /tmp/kubectl "https://dl.k8s.io/release/${KVER}/bin/linux/${KARCH}/kubectl"
+          chmod +x /tmp/kubectl
+          sudo install -o root -g root -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+          kubectl version --client
+
       - name: Install ChartMuseum Plugin
         run: |
           helm plugin install https://github.com/chartmuseum/helm-push.git
