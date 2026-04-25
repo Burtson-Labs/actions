@@ -88,9 +88,25 @@ jobs:
           path: ./packaged
 
       - name: Push Helm Chart
+        # cm-push returns non-zero with "409 already exists" when the chart
+        # version is unchanged from a previous publish (e.g. a PR run already
+        # pushed it, then the merge re-fires and re-pushes the same version).
+        # Treat that as a no-op and continue — the existing chart is still
+        # valid for the helm upgrade step downstream.
         run: |
           helm repo add burtson-labs-charts https://charts.burtson.ai --username ${{ secrets.HELM_REPO_USERNAME }} --password ${{ secrets.HELM_REPO_PASSWORD }}
-          helm cm-push ./packaged/*.tgz burtson-labs-charts
+          set +e
+          OUT="$(helm cm-push ./packaged/*.tgz burtson-labs-charts 2>&1)"
+          EXIT=$?
+          set -e
+          echo "$OUT"
+          if [ "$EXIT" -ne 0 ]; then
+            if echo "$OUT" | grep -qE "409|already exists"; then
+              echo "::warning ::Chart version already exists in ChartMuseum; skipping cm-push and continuing with the existing chart."
+            else
+              exit "$EXIT"
+            fi
+          fi
 
       - name: Set up Kubernetes
         run: |
