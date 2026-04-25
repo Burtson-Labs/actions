@@ -53,7 +53,18 @@ jobs:
           image: ghcr.io/burtson-labs/binfmt:latest
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
+        with:
+          # buildx spawns its own buildkit daemon (docker-container driver)
+          # that does NOT inherit dockerd's --registry-mirror config. We
+          # configure buildkit explicitly here so all docker.io image
+          # pulls during the build (FROM nginx, FROM node, etc.) go
+          # through mirror.gcr.io — Google's free, unauthenticated
+          # pull-through cache for Docker Hub. Otherwise our home IP
+          # burns the 100/6h anonymous Docker Hub rate limit fast.
+          config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
           
       - name: Extract metadata (tags, labels) for Docker
         id: meta
