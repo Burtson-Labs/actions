@@ -93,6 +93,13 @@ jobs:
         # pushed it, then the merge re-fires and re-pushes the same version).
         # Treat that as a no-op and continue — the existing chart is still
         # valid for the helm upgrade step downstream.
+        #
+        # IMPORTANT: tolerating the 409 silently is what enables the deploy
+        # to proceed, but it ALSO means a "forgot to bump Chart.yaml" deploy
+        # can succeed visually while changing nothing on the cluster. The
+        # Verify step below explicitly warns when that happens, so the
+        # silent-no-op failure mode is at least loud in the workflow log.
+        id: cm_push
         run: |
           helm repo add burtson-labs-charts https://charts.burtson.ai --username ${{ secrets.HELM_REPO_USERNAME }} --password ${{ secrets.HELM_REPO_PASSWORD }}
           set +e
@@ -100,13 +107,27 @@ jobs:
           EXIT=$?
           set -e
           echo "$OUT"
+          SKIPPED=false
           if [ "$EXIT" -ne 0 ]; then
             if echo "$OUT" | grep -qE "409|already exists"; then
               echo "::warning ::Chart version already exists in ChartMuseum; skipping cm-push and continuing with the existing chart."
+              SKIPPED=true
             else
               exit "$EXIT"
             fi
           fi
+          echo "skipped=$SKIPPED" >> "$GITHUB_OUTPUT"
+
+      - name: Verify chart version actually changed
+        # If cm-push hit 409 (chart version unchanged) AND the chart's
+        # deployment template has no `rollme` / Release.Revision annotation,
+        # the downstream `helm upgrade` will see no diff and silently no-op.
+        # Surface this as a loud workflow warning so the operator knows the
+        # deploy succeeded but the cluster did NOT pick up new code.
+        if: steps.cm_push.outputs.skipped == 'true'
+        run: |
+          CHART_VERSION="$(grep -E '^version:' ${{ inputs.chart_path }}/Chart.yaml | head -1 | awk '{print $2}')"
+          echo "::warning title=Chart version collision::Chart ${{ inputs.release_name }} version $CHART_VERSION was already in ChartMuseum. The downstream helm upgrade will run, but if the deployment template has no version-aware annotation (rollme/Release.Revision), pods WILL NOT rotate and the cluster will keep running the old image. Bump Chart.yaml's version+appVersion before the next push to force a rollout."
 
       - name: Set up Kubernetes
         run: |
