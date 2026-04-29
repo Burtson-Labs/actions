@@ -75,18 +75,17 @@ jobs:
         run: |
           helm package ${{ inputs.chart_path }} --destination ./packaged
 
-      - name: Upload Packaged Chart
-        uses: actions/upload-artifact@v4
-        with:
-          name: packaged-chart
-          path: ./packaged/
-
-      - name: Download Packaged Chart
-        uses: actions/download-artifact@v4
-        with:
-          name: packaged-chart
-          path: ./packaged
-
+      # The Upload + Download pair was a leftover from when package and
+      # publish were separate jobs. Both steps run on the same runner in
+      # the same job today, so handing off via actions/{upload,download}-
+      # artifact achieves nothing on disk — the packaged tgz is already
+      # right where the next step expects it. Worse, every run consumed
+      # GitHub artifact storage quota; once the org cap was hit, every
+      # subsequent CI run failed with "Failed to CreateArtifact: Artifact
+      # storage quota has been hit" (observed 2026-04-29 on AuthApi).
+      # Drop both steps — saves the quota AND cuts ~10s of round-trip.
+      # If publishing ever splits into a separate job again, swap the
+      # artifact pair for a job-output-driven path.
       - name: Push Helm Chart
         # cm-push returns non-zero with "409 already exists" when the chart
         # version is unchanged from a previous publish (e.g. a PR run already
