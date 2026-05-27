@@ -22,10 +22,10 @@ on:
         required: true
         type: string
       runs_on:
-        description: 'JSON-encoded runs-on value. Default is "ubuntu-latest". Pass "burtson-labs-runners" (the scale-set name) to opt into the Burtson-Labs self-hosted K3s pool.'
+        description: 'JSON-encoded runs-on value. Defaults to "burtson-labs-runners" (the Burtson-Labs self-hosted K3s pool) — every consumer gets free deploys instead of billing GitHub Actions minutes. Pass `"ubuntu-latest"` (with the literal quotes around the string inside the JSON) to opt back to github-hosted; required on the rare path where the cluster the workflow targets is unreachable from inside the K3s pool itself.'
         required: false
         type: string
-        default: '"ubuntu-latest"'
+        default: '"burtson-labs-runners"'
     secrets:
       HELM_REPO_USERNAME:
         description: 'Username for Helm repository'
