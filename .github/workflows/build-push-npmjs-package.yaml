@@ -80,7 +80,22 @@ jobs:
           echo "Publishing $PACKAGE_NAME to $REGISTRY_URL"
           echo "Using temporary npmrc: $TEMP_NPMRC"
           cat "$TEMP_NPMRC"
-          
+
+          # Idempotency guard: skip if this exact version is already on the
+          # registry. Reusable publish jobs run on any monorepo push, so a push
+          # that bumped one package shouldn't 403 trying to re-publish an
+          # unchanged sibling at the same version. Read the real name+version
+          # from package.json (PACKAGE_NAME may be unscoped).
+          PKG_NAME=$(node -p "require('./package.json').name")
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          echo "Checking if ${PKG_NAME}@${PKG_VERSION} is already published…"
+          EXISTING=$(npm view "${PKG_NAME}@${PKG_VERSION}" version --userconfig "$TEMP_NPMRC" 2>/dev/null || true)
+          if [ -n "$EXISTING" ]; then
+            echo "${PKG_NAME}@${PKG_VERSION} is already published; skipping."
+            rm -f "$TEMP_NPMRC"
+            exit 0
+          fi
+
           if [ "${IS_PUBLIC}" = "true" ]; then
             npm publish --userconfig "$TEMP_NPMRC" --access public
           else
