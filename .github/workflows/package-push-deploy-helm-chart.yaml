@@ -135,8 +135,18 @@ jobs:
         shell: bash
 
       - name: Ensure kubectl can connect to the cluster
+        # Pre-flight: fail fast with an actionable message instead of the ~2min
+        # opaque "dial tcp …:6443: i/o timeout". The usual cause is the
+        # kubeconfig's API-server host being Cloudflare-proxied (orange cloud):
+        # Cloudflare only forwards HTTP/HTTPS on standard ports, NOT 6443, so
+        # the TCP connect dies in the proxy. The host must be DNS-only (grey).
         run: |
-          kubectl get nodes
+          SERVER="$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}' 2>/dev/null || true)"
+          echo "Kube API server: ${SERVER:-<unknown>}"
+          if ! kubectl get nodes --request-timeout=15s; then
+            echo "::error title=Kubernetes API unreachable::Could not reach the cluster API at ${SERVER:-<unknown>}. If this host is behind Cloudflare, set its DNS record to DNS-only (grey cloud) — the proxy does NOT forward port 6443. Otherwise verify the KUBECONFIG secret's server host/IP and that the control plane is up."
+            exit 1
+          fi
 
       - name: Add Helm repository
         run: helm repo add burtson-labs-charts https://charts.burtson.ai --username ${{ secrets.HELM_REPO_USERNAME }} --password ${{ secrets.HELM_REPO_PASSWORD }}
