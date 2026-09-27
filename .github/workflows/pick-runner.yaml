@@ -1,0 +1,78 @@
+name: Pick Runner
+
+# Chooses a self-hosted runner when one with `label` is online, otherwise the
+# GitHub-hosted `fallback`. The output is JSON, ready for fromJSON():
+#
+#   pick-mac:
+#     uses: Burtson-Labs/actions/.github/workflows/pick-runner.yaml@main
+#     with:
+#       label: burtson-mac
+#       fallback: '"macos-14"'
+#     secrets: inherit
+#   build:
+#     needs: pick-mac
+#     runs-on: ${{ fromJSON(needs.pick-mac.outputs.runs_on) }}
+#
+# Online-but-busy still counts as available: the job queues briefly on the
+# self-hosted runner instead of paying for a hosted one. Any lookup failure
+# (missing token, API error) falls back, so a job never waits on a runner
+# that isn't there.
+
+on:
+  workflow_call:
+    inputs:
+      label:
+        description: 'Self-hosted runner label to prefer (e.g. "burtson-mac").'
+        required: true
+        type: string
+      fallback:
+        description: 'JSON-encoded GitHub-hosted runs-on value used when no runner with `label` is online, e.g. ''"macos-14"''.'
+        required: true
+        type: string
+      picker_runs_on:
+        description: 'JSON-encoded runs-on value for this picker job itself. Defaults to the free Burtson-Labs K3s pool.'
+        required: false
+        type: string
+        default: '"burtson-labs-runners"'
+    secrets:
+      RUNNER_STATUS_TOKEN:
+        description: 'Fine-grained PAT with org "Self-hosted runners: Read". Without it, the picker always returns `fallback`.'
+        required: false
+    outputs:
+      runs_on:
+        description: 'JSON-encoded runs-on value.'
+        value: ${{ jobs.pick.outputs.runs_on }}
+
+jobs:
+  pick:
+    runs-on: ${{ fromJSON(inputs.picker_runs_on) }}
+    timeout-minutes: 2
+    outputs:
+      runs_on: ${{ steps.pick.outputs.runs_on }}
+    steps:
+      - id: pick
+        env:
+          TOKEN: ${{ secrets.RUNNER_STATUS_TOKEN }}
+          ORG: ${{ github.repository_owner }}
+          LABEL: ${{ inputs.label }}
+          FALLBACK: ${{ inputs.fallback }}
+        run: |
+          set -euo pipefail
+          choice="$FALLBACK"
+          if [ -z "${TOKEN:-}" ]; then
+            echo "::notice::RUNNER_STATUS_TOKEN not set; using $FALLBACK"
+          elif online=$(curl -fsS --max-time 20 \
+                -H "Authorization: Bearer $TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/orgs/$ORG/actions/runners?per_page=100" \
+              | jq --arg l "$LABEL" '[.runners[] | select(.status == "online" and any(.labels[]; .name == $l))] | length'); then
+            if [ "$online" -gt 0 ]; then
+              choice=$(jq -cn --arg l "$LABEL" '$l')
+              echo "::notice::$online runner(s) labelled $LABEL online; using it"
+            else
+              echo "::notice::no runner labelled $LABEL online; using $FALLBACK"
+            fi
+          else
+            echo "::warning::runner status lookup failed; using $FALLBACK"
+          fi
+          echo "runs_on=$choice" >> "$GITHUB_OUTPUT"
