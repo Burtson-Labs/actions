@@ -71,11 +71,18 @@ jobs:
         uses: docker/metadata-action@v3
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # Same tags as the metadata-action defaults (branch / tag / pr-N),
+          # plus :latest ONLY for default-branch builds. Every consumer chart
+          # deploys image.tag=latest with pullPolicy Always, so a PR build
+          # must never overwrite :latest.
           flavor: |
-            latest=true
-      
-      - name: Debug NPM_TOKEN
-        run: echo "NPM_TOKEN=${{ secrets.GHCR_PAT }}"            
+            latest=false
+          tags: |
+            type=schedule
+            type=ref,event=branch
+            type=ref,event=tag
+            type=ref,event=pr
+            type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Debug image info
         run: |
