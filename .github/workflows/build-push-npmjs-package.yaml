@@ -79,7 +79,6 @@ jobs:
           
           echo "Publishing $PACKAGE_NAME to $REGISTRY_URL"
           echo "Using temporary npmrc: $TEMP_NPMRC"
-          cat "$TEMP_NPMRC"
 
           # Idempotency guard: skip if this exact version is already on the
           # registry. Reusable publish jobs run on any monorepo push, so a push
