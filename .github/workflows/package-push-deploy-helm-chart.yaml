@@ -146,7 +146,17 @@ jobs:
             printf '%s' "$KUBECONFIG_B64" | base64 -d > $HOME/.kube/config
             echo "Using the KUBECONFIG secret."
           elif [ -n "${KUBERNETES_SERVICE_HOST:-}" ] && [ -f /var/run/secrets/kubernetes.io/serviceaccount/token ]; then
-            # kubectl and helm use the pod's ServiceAccount when no kubeconfig exists.
+            # A kubeconfig that points at the pod's own ServiceAccount token
+            # file (no credential is copied). Written explicitly because the
+            # runner image's kubectl does not fall back to in-cluster config.
+            SA=/var/run/secrets/kubernetes.io/serviceaccount
+            mkdir -p $HOME/.kube
+            kubectl config set-cluster in-cluster \
+              --server="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}" \
+              --certificate-authority="$SA/ca.crt"
+            kubectl config set users.runner-sa.tokenFile "$SA/token"
+            kubectl config set-context in-cluster --cluster=in-cluster --user=runner-sa
+            kubectl config use-context in-cluster
             echo "No KUBECONFIG secret: using this runner pod's ServiceAccount (in-cluster)."
             echo "IN_CLUSTER_AUTH=1" >> "$GITHUB_ENV"
           else
