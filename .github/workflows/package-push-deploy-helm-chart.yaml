@@ -34,8 +34,8 @@ on:
         description: 'Password for Helm repository'
         required: true
       KUBECONFIG:
-        description: 'Base64-encoded content of the kubeconfig file'
-        required: true
+        description: 'Base64-encoded content of the kubeconfig file. Leave unset on the burtson-deploy-runners pool: its pods deploy with their own scoped ServiceAccount (github-deployer), so no cluster credential lives in GitHub.'
+        required: false
 
 jobs:
   package-publish-deploy:
@@ -129,9 +129,22 @@ jobs:
           echo "::warning title=Chart version collision::Chart ${{ inputs.release_name }} version $CHART_VERSION was already in ChartMuseum. The downstream helm upgrade will run, but if the deployment template has no version-aware annotation (rollme/Release.Revision), pods WILL NOT rotate and the cluster will keep running the old image. Bump Chart.yaml's version+appVersion before the next push to force a rollout."
 
       - name: Set up Kubernetes
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG }}
         run: |
-          mkdir -p $HOME/.kube
-          echo "${{ secrets.KUBECONFIG }}" | base64 -d > $HOME/.kube/config
+          if [ -n "$KUBECONFIG_B64" ]; then
+            mkdir -p $HOME/.kube
+            umask 077
+            printf '%s' "$KUBECONFIG_B64" | base64 -d > $HOME/.kube/config
+            echo "Using the KUBECONFIG secret."
+          elif [ -n "${KUBERNETES_SERVICE_HOST:-}" ] && [ -f /var/run/secrets/kubernetes.io/serviceaccount/token ]; then
+            # kubectl and helm use the pod's ServiceAccount when no kubeconfig exists.
+            echo "No KUBECONFIG secret: using this runner pod's ServiceAccount (in-cluster)."
+            echo "IN_CLUSTER_AUTH=1" >> "$GITHUB_ENV"
+          else
+            echo "::error title=No cluster credentials::Pass the KUBECONFIG secret, or run on burtson-deploy-runners (in-cluster ServiceAccount)."
+            exit 1
+          fi
         shell: bash
 
       - name: Ensure kubectl can connect to the cluster
@@ -141,6 +154,15 @@ jobs:
         # Cloudflare only forwards HTTP/HTTPS on standard ports, NOT 6443, so
         # the TCP connect dies in the proxy. The host must be DNS-only (grey).
         run: |
+          if [ "${IN_CLUSTER_AUTH:-}" = 1 ]; then
+            # A scoped deployer can't list nodes; check what it needs instead.
+            if [ "$(kubectl auth can-i patch deployments -n "${{ inputs.namespace }}" --request-timeout=15s)" != yes ]; then
+              echo "::error title=Deployer not allowed::This runner's ServiceAccount cannot deploy to namespace ${{ inputs.namespace }}. Add a RoleBinding for it (ci-runners k8s/github-deployer.yaml)."
+              exit 1
+            fi
+            echo "In-cluster ServiceAccount may deploy to ${{ inputs.namespace }}."
+            exit 0
+          fi
           SERVER="$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}' 2>/dev/null || true)"
           echo "Kube API server: ${SERVER:-<unknown>}"
           if ! kubectl get nodes --request-timeout=15s; then
