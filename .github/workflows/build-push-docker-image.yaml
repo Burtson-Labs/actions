@@ -37,8 +37,10 @@ jobs:
         uses: docker/login-action@v2
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ secrets.GHCR_USERNAME }}
-          password: ${{ secrets.GHCR_PAT }}
+          # Without the org GHCR_PAT, the caller's own GITHUB_TOKEN (needs
+          # `packages: write`), which can only push packages linked to its repo.
+          username: ${{ secrets.GHCR_USERNAME || github.actor }}
+          password: ${{ secrets.GHCR_PAT || github.token }}
 
       - name: Set up QEMU
         # Skip when only building the host's native arch — saves a binfmt
