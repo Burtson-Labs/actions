@@ -193,8 +193,27 @@ jobs:
         run: helm repo add burtson-labs-charts https://charts.burtson.ai --username ${{ secrets.HELM_REPO_USERNAME }} --password ${{ secrets.HELM_REPO_PASSWORD }}
 
       - name: Update Helm repository
+        # ChartMuseum's index can lag a just-pushed chart by a few seconds to a
+        # minute. `helm upgrade burtson-labs-charts/<name>` with no --version
+        # then deploys the PREVIOUS chart while the job still reports success
+        # (seen 2026-11-15 on S3Api, StealthAdminApi, chat-tenant-ui, AuthApi,
+        # GatewayApi and bandit: pods kept old probes/old images). Wait until
+        # the index lists this commit's version; the deploy step pins it.
         if: inputs.chart_source != 'local'
-        run: helm repo update
+        run: |
+          WANT="$(grep -E '^version:' ${{ inputs.chart_path }}/Chart.yaml | head -1 | awk '{print $2}' | tr -d '"')"
+          echo "CHART_VERSION=$WANT" >> "$GITHUB_ENV"
+          for i in $(seq 1 24); do
+            helm repo update burtson-labs-charts >/dev/null
+            if helm search repo "burtson-labs-charts/${{ inputs.release_name }}" --version "$WANT" -o json | grep -q "\"version\":\"$WANT\""; then
+              echo "ChartMuseum index lists ${{ inputs.release_name }} $WANT."
+              exit 0
+            fi
+            echo "Index does not list ${{ inputs.release_name }} $WANT yet (try $i/24); waiting 5s."
+            sleep 5
+          done
+          echo "::error title=Chart not in index::burtson-labs-charts/${{ inputs.release_name }} $WANT never appeared in the ChartMuseum index; refusing to deploy an older chart."
+          exit 1
 
       - name: Deploy Helm chart
         run: |
@@ -211,8 +230,8 @@ jobs:
           fi
           if [ -z "${{ inputs.values_file }}" ]; then
             helm upgrade --install ${{ inputs.release_name }} burtson-labs-charts/${{ inputs.release_name }} \
-              --namespace ${{ inputs.namespace }}
+              --version "$CHART_VERSION" --namespace ${{ inputs.namespace }}
           else
             helm upgrade --install ${{ inputs.release_name }} burtson-labs-charts/${{ inputs.release_name }} \
-              --namespace ${{ inputs.namespace }} -f ${{ inputs.values_file }}
+              --version "$CHART_VERSION" --namespace ${{ inputs.namespace }} -f ${{ inputs.values_file }}
           fi
