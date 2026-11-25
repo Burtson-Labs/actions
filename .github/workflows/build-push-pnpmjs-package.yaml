@@ -143,6 +143,11 @@ jobs:
             exit 1
           fi
           if [ "$TRUSTED" = "true" ]; then
+            VERSION=$(node -p "require('./$PACKAGE_PATH/package.json').version")
+            if npm view "$PACKAGE_NAME@$VERSION" version >/dev/null 2>&1; then
+              echo "$PACKAGE_NAME@$VERSION is already on npm; nothing to publish."
+              exit 0
+            fi
             OUT=$(mktemp -d)
             (cd "$PACKAGE_PATH" && pnpm pack --pack-destination "$OUT")
             TARBALL=$(ls "$OUT"/*.tgz)
