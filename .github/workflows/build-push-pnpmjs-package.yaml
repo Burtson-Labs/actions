@@ -26,9 +26,20 @@ on:
         type: string
         default: '"ubuntu-latest"'
         description: 'JSON-encoded runs-on value. Default is "ubuntu-latest". Pass "burtson-labs-runners" (the scale-set name) to opt into the Burtson-Labs self-hosted K3s pool.'
+      trustedPublishing:
+        required: false
+        type: boolean
+        default: false
+        description: >-
+          Publish with npm trusted publishing (OIDC) instead of NPM_TOKEN. The
+          calling job needs `permissions: id-token: write`, the package must list
+          the caller's repo and workflow file as its trusted publisher on
+          npmjs.com, and npm accepts GitHub-hosted runners only. The package is
+          packed with pnpm (workspace: versions resolved) and published with
+          npm 11.5.1+.
     secrets:
       NPM_TOKEN:
-        required: true
+        required: false
 
 jobs:
   publish-package:
@@ -40,8 +51,12 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 18
-          registry-url: ${{ inputs.registryUrl }}
+          node-version: ${{ inputs.trustedPublishing && 22 || 18 }}
+          registry-url: ${{ !inputs.trustedPublishing && inputs.registryUrl || '' }}
+
+      - name: npm with trusted publishing support
+        if: ${{ inputs.trustedPublishing }}
+        run: npm install -g npm@^11.5.1
 
       - name: Enable Corepack (pnpm)
         env:
@@ -65,23 +80,29 @@ jobs:
           REGISTRY_URL_INPUT: ${{ inputs.registryUrl }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           PACKAGE_NAME: ${{ inputs.packageName }}
+          TRUSTED: ${{ inputs.trustedPublishing }}
         run: |
           REGISTRY_URL="$REGISTRY_URL_INPUT"
           if [ -z "$REGISTRY_URL" ]; then
             REGISTRY_URL="https://registry.npmjs.org/"
             echo "registryUrl input empty; defaulting to $REGISTRY_URL"
           fi
-          if [ -z "$NPM_TOKEN" ]; then
-            echo "NPM_TOKEN secret must be provided" >&2
-            exit 1
-          fi
           TEMP_NPMRC=$(mktemp)
           REGISTRY_HOST=$(echo "$REGISTRY_URL" | sed -e 's#^https\?://##' -e 's#/$##')
-          {
-            echo "registry=$REGISTRY_URL"
-            echo "//${REGISTRY_HOST}/:_authToken=$NPM_TOKEN"
-            echo "always-auth=true"
-          } > "$TEMP_NPMRC"
+          if [ "$TRUSTED" = "true" ]; then
+            # No token: npm exchanges the job's OIDC token at publish time.
+            echo "registry=$REGISTRY_URL" > "$TEMP_NPMRC"
+          else
+            if [ -z "$NPM_TOKEN" ]; then
+              echo "NPM_TOKEN secret must be provided (or set trustedPublishing: true)" >&2
+              exit 1
+            fi
+            {
+              echo "registry=$REGISTRY_URL"
+              echo "//${REGISTRY_HOST}/:_authToken=$NPM_TOKEN"
+              echo "always-auth=true"
+            } > "$TEMP_NPMRC"
+          fi
           if [[ "$PACKAGE_NAME" == @*/* ]]; then
             SCOPE=${PACKAGE_NAME%%/*}
             echo "${SCOPE}:registry=$REGISTRY_URL" >> "$TEMP_NPMRC"
@@ -113,11 +134,22 @@ jobs:
         env:
           PACKAGE_NAME: ${{ inputs.packageName }}
           IS_PUBLIC: ${{ inputs.isPublic }}
+          TRUSTED: ${{ inputs.trustedPublishing }}
+          PACKAGE_PATH: ${{ inputs.packagePath }}
           NPM_CONFIG_USERCONFIG: ${{ steps.registry_auth.outputs.npmrc_path }}
         run: |
           if [ -z "$PACKAGE_NAME" ]; then
             echo "packageName input is required" >&2
             exit 1
+          fi
+          if [ "$TRUSTED" = "true" ]; then
+            OUT=$(mktemp -d)
+            (cd "$PACKAGE_PATH" && pnpm pack --pack-destination "$OUT")
+            TARBALL=$(ls "$OUT"/*.tgz)
+            ACCESS=()
+            [ "${IS_PUBLIC}" = "true" ] && ACCESS=(--access public)
+            npm publish "$TARBALL" "${ACCESS[@]}"
+            exit 0
           fi
           if [ "${IS_PUBLIC}" = "true" ]; then
             pnpm --filter "$PACKAGE_NAME" publish --no-git-checks --access public
