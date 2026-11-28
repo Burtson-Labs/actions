@@ -63,6 +63,7 @@ esac
 HIST="$(h history "$REL" -n "$NS" --max 20 -o json)"
 CUR_REV="$(h get metadata "$REL" -n "$NS" -o json | jq -r '.revision')"
 CUR_VER="$(printf '%s' "$HIST" | jq -r --argjson r "$CUR_REV" '.[] | select(.revision==$r) | .chart')"
+CUR_NUM="$(h get metadata "$REL" -n "$NS" -o json | jq -r '.version')"   # chart version without the name
 
 images_of() { # revision -> images in that revision's manifest
   h get manifest "$REL" -n "$NS" --revision "$1" 2>/dev/null \
@@ -116,5 +117,5 @@ h history "$REL" -n "$NS" --max 3
 k -n "$NS" get pods -l "app.kubernetes.io/instance=$REL" \
   -o custom-columns='POD:.metadata.name,READY:.status.containerStatuses[*].ready,IMAGE:.spec.containers[*].image,STARTED:.status.startTime' 2>/dev/null || true
 echo
-echo "Rolled back from $CUR_VER. CI deploys any chart version above the live one, so fix"
-echo "forward with a new patch above $CUR_VER (a re-run of the $CUR_VER pipeline would redeploy it)."
+echo "Rolled back from $CUR_NUM. CI deploys any chart version above the live one, so fix"
+echo "forward with a new patch above $CUR_NUM (a re-run of the $CUR_NUM pipeline would redeploy it)."
