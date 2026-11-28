@@ -119,10 +119,14 @@ jobs:
               mirrors = ["mirror.gcr.io"]
           
       # A version tag is immutable: if :<version> already exists and was built
-      # from another commit, the chart was not bumped. Fail instead of
-      # overwriting the image a running release (and its rollback) points at.
-      # A re-run of the same commit may rebuild it.
+      # from another commit, the chart was not bumped. If that commit changed
+      # anything that goes into the image, fail instead of overwriting the
+      # image a running release (and its rollback) points at. If it only
+      # touched CI, docs, Markdown or the chart, reuse the existing image and
+      # skip the build (the deploy then changes nothing unless the chart is
+      # bumped). A re-run of the same commit may rebuild it.
       - name: Refuse to overwrite a version built from another commit
+        id: guard
         if: steps.ver.outputs.version != ''
         run: |
           set -euo pipefail
@@ -132,13 +136,29 @@ jobs:
             exit 0
           fi
           REV="$(printf '%s' "$JSON" | jq -r '[.. | objects | .Labels? // empty | .["org.opencontainers.image.revision"]? // empty] | first // ""')"
-          if [ -n "$REV" ] && [ "$REV" != "$GITHUB_SHA" ]; then
-            echo "::error title=Image version already published::$REF was built from ${REV::7}, not ${GITHUB_SHA::7}. Bump Chart.yaml version + appVersion (next patch above main) so this commit gets its own immutable tag."
-            exit 1
+          if [ -z "$REV" ] || [ "$REV" = "$GITHUB_SHA" ]; then
+            echo "$REF exists from this commit (${REV:-unlabelled}); rebuilding it."
+            exit 0
           fi
-          echo "$REF exists from this commit (${REV:-unlabelled}); rebuilding it."
+          CHANGED=""
+          if git fetch -q --no-tags --depth=1 origin "$REV" 2>/dev/null; then
+            CHANGED="$(git diff --name-only "$REV" "$GITHUB_SHA" || echo '<diff failed>')"
+          else
+            CHANGED="<could not fetch $REV>"
+          fi
+          IMAGE_INPUTS="$(printf '%s\n' "$CHANGED" | grep -vE '^(\.github/|docs/|charts/)|\.md$|^$' || true)"
+          if [ -z "$IMAGE_INPUTS" ]; then
+            echo "::notice title=Image reused::$REF was built from ${REV::7}; this commit only changes CI/docs/chart files, so the image is reused and not rebuilt. Bump Chart.yaml version + appVersion to deploy a change."
+            echo "skip_build=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Files changed since ${REV::7} that can affect the image:"
+          printf '%s\n' "$IMAGE_INPUTS" | head -20
+          echo "::error title=Image version already published::$REF was built from ${REV::7}, not ${GITHUB_SHA::7}. Bump Chart.yaml version + appVersion (next patch above main) so this commit gets its own immutable tag."
+          exit 1
 
       - name: Extract metadata (tags, labels) for Docker
+        if: steps.guard.outputs.skip_build != 'true'
         id: meta
         uses: docker/metadata-action@v3
         with:
@@ -161,11 +181,13 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Debug image info
+        if: steps.guard.outputs.skip_build != 'true'
         run: |
           echo "ImageName: ${{ env.IMAGE_NAME }}"
           echo "Docker tags: ${{ steps.meta.outputs.tags }}"
 
       - name: Build and push Docker image
+        if: steps.guard.outputs.skip_build != 'true'
         id: build
         uses: docker/build-push-action@v5
         with:
@@ -185,5 +207,5 @@ jobs:
             echo "### ${{ env.IMAGE_NAME }}"
             echo "- version: \`${{ steps.ver.outputs.version || 'none' }}\`"
             echo "- sha tag: \`${{ steps.ver.outputs.sha_tag }}\`"
-            echo "- digest: \`${{ steps.build.outputs.digest }}\`"
+            echo "- digest: \`${{ steps.build.outputs.digest || 'not rebuilt (existing image reused)' }}\`"
           } >> "$GITHUB_STEP_SUMMARY"

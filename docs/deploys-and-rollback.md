@@ -8,7 +8,9 @@ and how to put the previous version back.
 1. `build-push-docker-image.yaml` builds the image and pushes three tags:
    - `:<version>`: the chart's `appVersion` (caller passes `chart_path`) or the `version` input.
      Pushed only from the default branch. It is immutable: if the tag already exists and was
-     built from another commit, the build fails and asks for a chart bump.
+     built from another commit, the build fails and asks for a chart bump, unless that commit
+     only changed `.github/`, `docs/`, `charts/` or Markdown files; then the existing image is
+     reused and the build is skipped (a notice says so).
    - `:sha-<short>`: every build, any branch.
    - `:latest`: default branch only, kept as a convenience. Charts do not deploy it.
 2. `package-push-deploy-helm-chart.yaml` pushes the chart to ChartMuseum and runs
@@ -75,7 +77,8 @@ helm upgrade <release> burtson-labs-charts/<chart> -n <ns> --version <v> --reuse
 
 | Symptom | Meaning | Do |
 |---|---|---|
-| `Image version already published` | Chart not bumped (or bumped `version` but not `appVersion`) | Bump both to the next patch above main |
+| `Image version already published` | Chart not bumped (or bumped `version` but not `appVersion`) and the commit changes image inputs | Bump both to the next patch above main |
+| `Image reused` (notice, green) | CI/docs/chart-only commit without a bump | Nothing; bump the chart if the change should deploy |
 | `Stale deploy skipped` (warning, green) | A newer chart is already live | Nothing |
 | `timed out waiting for the condition` + `rolled back` | New pods never became ready; helm restored the previous revision | `kubectl -n <ns> describe pod` / `logs --previous` on the failed pods, fix forward |
 | `another operation (install/upgrade/rollback) is in progress` | A previous helm run died mid-upgrade (release `pending-upgrade`) | `helm history`; `helm rollback <release> <last deployed rev>` clears it |

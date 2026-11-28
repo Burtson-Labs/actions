@@ -82,7 +82,7 @@ Inputs added 2026-11-28 (defaults apply to every caller):
 
 | Workflow | Input | Default | |
 |---|---|---|---|
-| build-push-docker-image | `chart_path` / `version` | `""` | Push `:<version>`; fails if that tag exists from another commit |
+| build-push-docker-image | `chart_path` / `version` | `""` | Push `:<version>`; fails if that tag exists from another commit that changed image inputs (CI/docs/chart/Markdown-only commits reuse the image) |
 | package-push-deploy-helm-chart | `atomic` | `true` | `--atomic`: wait, auto-rollback on a failed rollout |
 | package-push-deploy-helm-chart | `timeout` | `10m` | helm `--timeout` |
 | package-push-deploy-helm-chart | `allow_downgrade` | `false` | Skip (green, warning) when the chart is older than the live release |
