@@ -31,6 +31,21 @@ on:
         required: false
         type: string
         default: '"burtson-labs-runners"'
+      atomic:
+        description: 'helm upgrade --atomic: wait for the rollout and roll back automatically if it does not become ready within `timeout`.'
+        required: false
+        type: boolean
+        default: true
+      timeout:
+        description: 'helm --timeout for the rollout (Go duration, e.g. 10m). Raise it for slow starters (GPU / model pulls).'
+        required: false
+        type: string
+        default: '10m'
+      allow_downgrade:
+        description: 'Deploy even when the chart version is LOWER than the live release (normally skipped so an older run can never roll back a newer one). Use scripts/rollback.sh for rollbacks instead.'
+        required: false
+        type: boolean
+        default: false
     secrets:
       HELM_REPO_USERNAME:
         description: 'Username for Helm repository (not needed with chart_source: local)'
@@ -45,6 +60,16 @@ on:
 jobs:
   package-publish-deploy:
     runs-on: ${{ fromJSON(inputs.runs_on) }}
+    # One deploy per release at a time, cluster-wide (every repo and session
+    # that deploys this release shares the group). A newer run waits for the
+    # running one instead of cancelling it mid-rollout; a queued run is
+    # replaced by a newer one. The version check below covers the case where
+    # an older commit's run reaches this point after a newer one.
+    # Callers must not use this group name for their own workflow-level
+    # concurrency (that would deadlock).
+    concurrency:
+      group: helm-deploy-${{ inputs.namespace }}-${{ inputs.release_name }}
+      cancel-in-progress: false
 
     steps:
       - name: Checkout repository
@@ -188,8 +213,39 @@ jobs:
             exit 1
           fi
 
+      - name: Refuse to deploy a version older than the live release
+        # Two sessions pushing the same service: the later commit's run can
+        # finish first. Without this check the earlier commit's run would then
+        # roll production back. Chart versions are bumped on every deploy, so
+        # a lower version than the live one is always stale.
+        id: guard
+        run: |
+          set -euo pipefail
+          WANT="$(grep -E '^version:' ${{ inputs.chart_path }}/Chart.yaml | head -1 | awk '{print $2}' | tr -d "\"'")"
+          LIVE=""
+          if META="$(helm get metadata ${{ inputs.release_name }} -n ${{ inputs.namespace }} -o json 2>/dev/null)"; then
+            LIVE="$(printf '%s' "$META" | jq -r '.version // ""')"
+            STATUS="$(printf '%s' "$META" | jq -r '.status // ""')"
+            echo "Live: ${{ inputs.release_name }} chart $LIVE (status ${STATUS:-?}); this run: $WANT"
+          else
+            echo "No live release ${{ inputs.release_name }} in ${{ inputs.namespace }}; first install of $WANT."
+          fi
+          SKIP=false
+          if [ -n "$LIVE" ] && [ "$LIVE" != "$WANT" ]; then
+            LOWEST="$(printf '%s\n%s\n' "$LIVE" "$WANT" | sort -V | head -1)"
+            if [ "$LOWEST" = "$WANT" ]; then
+              if [ "${{ inputs.allow_downgrade }}" = true ]; then
+                echo "::warning title=Downgrade allowed::Deploying $WANT over newer live $LIVE (allow_downgrade)."
+              else
+                echo "::warning title=Stale deploy skipped::Live ${{ inputs.release_name }} is chart $LIVE, newer than this run's $WANT. Not deploying (a newer commit already shipped). Use scripts/rollback.sh to roll back on purpose."
+                SKIP=true
+              fi
+            fi
+          fi
+          echo "skip=$SKIP" >> "$GITHUB_OUTPUT"
+
       - name: Add Helm repository
-        if: inputs.chart_source != 'local'
+        if: inputs.chart_source != 'local' && steps.guard.outputs.skip != 'true'
         run: helm repo add burtson-labs-charts https://charts.burtson.ai --username ${{ secrets.HELM_REPO_USERNAME }} --password ${{ secrets.HELM_REPO_PASSWORD }}
 
       - name: Update Helm repository
@@ -199,7 +255,7 @@ jobs:
         # (seen 2026-11-15 on S3Api, StealthAdminApi, chat-tenant-ui, AuthApi,
         # GatewayApi and bandit: pods kept old probes/old images). Wait until
         # the index lists this commit's version; the deploy step pins it.
-        if: inputs.chart_source != 'local'
+        if: inputs.chart_source != 'local' && steps.guard.outputs.skip != 'true'
         run: |
           WANT="$(grep -E '^version:' ${{ inputs.chart_path }}/Chart.yaml | head -1 | awk '{print $2}' | tr -d '"')"
           echo "CHART_VERSION=$WANT" >> "$GITHUB_ENV"
@@ -216,22 +272,29 @@ jobs:
           exit 1
 
       - name: Deploy Helm chart
+        if: steps.guard.outputs.skip != 'true'
+        # --atomic waits for every Deployment/StatefulSet/DaemonSet in the
+        # release to become ready and rolls the release back by itself when
+        # it does not within --timeout, so a bad image or failing probe never
+        # stays live. 20 revisions are kept for helm rollback.
         run: |
+          set -euo pipefail
+          ARGS=(--namespace ${{ inputs.namespace }} --timeout ${{ inputs.timeout }} --history-max 20)
+          if [ "${{ inputs.atomic }}" = true ]; then ARGS+=(--atomic); fi
+          if [ -n "${{ inputs.values_file }}" ]; then ARGS+=(-f ${{ inputs.values_file }}); fi
           if [ "${{ inputs.chart_source }}" = local ]; then
             # Straight from the checkout: the chart that was reviewed is the one deployed.
-            if [ -z "${{ inputs.values_file }}" ]; then
-              helm upgrade --install ${{ inputs.release_name }} ./${{ inputs.chart_path }} \
-                --namespace ${{ inputs.namespace }}
-            else
-              helm upgrade --install ${{ inputs.release_name }} ./${{ inputs.chart_path }} \
-                --namespace ${{ inputs.namespace }} -f ${{ inputs.values_file }}
-            fi
-            exit 0
-          fi
-          if [ -z "${{ inputs.values_file }}" ]; then
-            helm upgrade --install ${{ inputs.release_name }} burtson-labs-charts/${{ inputs.release_name }} \
-              --version "$CHART_VERSION" --namespace ${{ inputs.namespace }}
+            CHART=./${{ inputs.chart_path }}
           else
-            helm upgrade --install ${{ inputs.release_name }} burtson-labs-charts/${{ inputs.release_name }} \
-              --version "$CHART_VERSION" --namespace ${{ inputs.namespace }} -f ${{ inputs.values_file }}
+            CHART=burtson-labs-charts/${{ inputs.release_name }}
+            ARGS+=(--version "$CHART_VERSION")
           fi
+          helm upgrade --install ${{ inputs.release_name }} "$CHART" "${ARGS[@]}"
+
+      - name: Show what is live
+        if: always() && steps.guard.outputs.skip != 'true'
+        continue-on-error: true
+        run: |
+          helm history ${{ inputs.release_name }} -n ${{ inputs.namespace }} --max 5 || true
+          kubectl -n ${{ inputs.namespace }} get deploy,sts,ds -l app.kubernetes.io/instance=${{ inputs.release_name }} \
+            -o custom-columns='KIND:.kind,NAME:.metadata.name,READY:.status.readyReplicas,IMAGES:.spec.template.spec.containers[*].image' 2>/dev/null || true

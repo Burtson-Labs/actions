@@ -16,6 +16,26 @@ on:
         type: string
         default: '"ubuntu-latest"'
         description: 'JSON-encoded runs-on value. Default is "ubuntu-latest". Pass "burtson-labs-runners" (the scale-set name) to opt into the Burtson-Labs self-hosted K3s pool.'
+      version:
+        required: false
+        type: string
+        default: ""
+        description: 'Immutable release tag to push as :<version> (default-branch builds only). Leave empty and set chart_path to use that chart''s appVersion.'
+      chart_path:
+        required: false
+        type: string
+        default: ""
+        description: 'Chart directory whose Chart.yaml appVersion is the image version (used when version is empty). The chart should deploy image tag = appVersion with pullPolicy IfNotPresent.'
+    outputs:
+      version:
+        description: 'The :<version> tag pushed ("" when none)'
+        value: ${{ jobs.docker-publish.outputs.version }}
+      sha_tag:
+        description: 'The :sha-<short> tag pushed'
+        value: ${{ jobs.docker-publish.outputs.sha_tag }}
+      digest:
+        description: 'Image digest (sha256:...)'
+        value: ${{ jobs.docker-publish.outputs.digest }}
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ inputs.imageName }}
@@ -25,9 +45,39 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runs_on) }}
     outputs:
       tag: ${{ steps.meta.outputs.tags }}
+      version: ${{ steps.ver.outputs.version }}
+      sha_tag: ${{ steps.ver.outputs.sha_tag }}
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
+
+      # Every build pushes :sha-<short>. A default-branch build also pushes
+      # :<version> (input, or the chart's appVersion) so charts can deploy an
+      # immutable tag and `helm rollback` returns to an image that still exists.
+      # GHCR keeps every version (no Burtson-Labs workflow deletes package
+      # versions); keep it that way, or keep semver tags if a cleanup is added.
+      - name: Resolve image version
+        id: ver
+        run: |
+          set -euo pipefail
+          VERSION="${{ inputs.version }}"
+          if [ -z "$VERSION" ] && [ -n "${{ inputs.chart_path }}" ]; then
+            VERSION="$(grep -E '^appVersion:' "${{ inputs.chart_path }}/Chart.yaml" | head -1 | awk '{print $2}' | tr -d "\"'")"
+            [ -n "$VERSION" ] || { echo "::error::No appVersion in ${{ inputs.chart_path }}/Chart.yaml"; exit 1; }
+          fi
+          case "$VERSION" in
+            "") ;;
+            latest|main) echo "::error::'$VERSION' is not an immutable version"; exit 1 ;;
+            *[!A-Za-z0-9._-]*) echo "::error::Invalid version tag '$VERSION'"; exit 1 ;;
+          esac
+          if [ "${{ github.ref }}" != "refs/heads/${{ github.event.repository.default_branch }}" ]; then
+            [ -z "$VERSION" ] || echo "Not the default branch: skipping the :$VERSION tag (sha tag only)."
+            VERSION=""
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "sha_tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "Image version: ${VERSION:-<none>}, sha tag: sha-${GITHUB_SHA::7}"
 
       # Auth to GHCR FIRST so the QEMU step (which pulls a binfmt image)
       # can hit our mirrored GHCR copy instead of Docker Hub. Every Pi 5
@@ -68,15 +118,37 @@ jobs:
             [registry."docker.io"]
               mirrors = ["mirror.gcr.io"]
           
+      # A version tag is immutable: if :<version> already exists and was built
+      # from another commit, the chart was not bumped. Fail instead of
+      # overwriting the image a running release (and its rollback) points at.
+      # A re-run of the same commit may rebuild it.
+      - name: Refuse to overwrite a version built from another commit
+        if: steps.ver.outputs.version != ''
+        run: |
+          set -euo pipefail
+          REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.ver.outputs.version }}"
+          if ! JSON="$(docker buildx imagetools inspect "$REF" --format '{{json .Image}}' 2>/dev/null)"; then
+            echo "$REF does not exist yet."
+            exit 0
+          fi
+          REV="$(printf '%s' "$JSON" | jq -r '[.. | objects | .Labels? // empty | .["org.opencontainers.image.revision"]? // empty] | first // ""')"
+          if [ -n "$REV" ] && [ "$REV" != "$GITHUB_SHA" ]; then
+            echo "::error title=Image version already published::$REF was built from ${REV::7}, not ${GITHUB_SHA::7}. Bump Chart.yaml version + appVersion (next patch above main) so this commit gets its own immutable tag."
+            exit 1
+          fi
+          echo "$REF exists from this commit (${REV:-unlabelled}); rebuilding it."
+
       - name: Extract metadata (tags, labels) for Docker
         id: meta
         uses: docker/metadata-action@v3
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           # Same tags as the metadata-action defaults (branch / tag / pr-N),
-          # plus :latest ONLY for default-branch builds. Every consumer chart
-          # deploys image.tag=latest with pullPolicy Always, so a PR build
-          # must never overwrite :latest.
+          # plus :sha-<short> always, :<version> (default branch, resolved
+          # above) and :latest ONLY for default-branch builds. :latest is a
+          # convenience; charts should deploy :<version> (IfNotPresent). Older
+          # charts still deploy latest + Always, so a PR build must never
+          # overwrite :latest.
           flavor: |
             latest=false
           tags: |
@@ -84,6 +156,8 @@ jobs:
             type=ref,event=branch
             type=ref,event=tag
             type=ref,event=pr
+            type=sha,prefix=sha-
+            type=raw,value=${{ steps.ver.outputs.version }},enable=${{ steps.ver.outputs.version != '' }}
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Debug image info
@@ -92,6 +166,7 @@ jobs:
           echo "Docker tags: ${{ steps.meta.outputs.tags }}"
 
       - name: Build and push Docker image
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -103,3 +178,12 @@ jobs:
             NPM_TOKEN=${{ secrets.GHCR_PAT }}
           secrets: |
             npmrc=${{ secrets.NPMRC }}
+
+      - name: Summary
+        run: |
+          {
+            echo "### ${{ env.IMAGE_NAME }}"
+            echo "- version: \`${{ steps.ver.outputs.version || 'none' }}\`"
+            echo "- sha tag: \`${{ steps.ver.outputs.sha_tag }}\`"
+            echo "- digest: \`${{ steps.build.outputs.digest }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
